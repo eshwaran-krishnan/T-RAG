@@ -289,6 +289,77 @@ def init_session_state():
         st.session_state.chat_history = []
     if 'api_checking' not in st.session_state:
         st.session_state.api_checking = False
+    
+    # Cache for sidebar data to prevent constant API calls
+    if 'cached_system_info' not in st.session_state:
+        st.session_state.cached_system_info = None
+    if 'cached_system_info_time' not in st.session_state:
+        st.session_state.cached_system_info_time = None
+    if 'cached_current_time' not in st.session_state:
+        st.session_state.cached_current_time = None
+    if 'cached_current_time_timestamp' not in st.session_state:
+        st.session_state.cached_current_time_timestamp = None
+    if 'cached_db_status' not in st.session_state:
+        st.session_state.cached_db_status = None
+    if 'cached_db_status_time' not in st.session_state:
+        st.session_state.cached_db_status_time = None
+
+def get_cached_system_info(force_refresh=False):
+    """Get system info with caching to prevent frequent API calls"""
+    cache_duration = 60  # Cache for 60 seconds
+    current_time = time.time()
+    
+    if (force_refresh or 
+        st.session_state.cached_system_info is None or 
+        st.session_state.cached_system_info_time is None or
+        (current_time - st.session_state.cached_system_info_time) > cache_duration):
+        
+        try:
+            st.session_state.cached_system_info = get_system_info()
+            st.session_state.cached_system_info_time = current_time
+        except Exception as e:
+            if st.session_state.cached_system_info is None:
+                st.session_state.cached_system_info = {"error": str(e)}
+    
+    return st.session_state.cached_system_info
+
+def get_cached_current_time(force_refresh=False):
+    """Get current time with caching to prevent frequent API calls"""
+    cache_duration = 30  # Cache for 30 seconds (shorter for time)
+    current_timestamp = time.time()
+    
+    if (force_refresh or 
+        st.session_state.cached_current_time is None or 
+        st.session_state.cached_current_time_timestamp is None or
+        (current_timestamp - st.session_state.cached_current_time_timestamp) > cache_duration):
+        
+        try:
+            st.session_state.cached_current_time = get_current_time()
+            st.session_state.cached_current_time_timestamp = current_timestamp
+        except Exception as e:
+            if st.session_state.cached_current_time is None:
+                st.session_state.cached_current_time = f"Error: {str(e)}"
+    
+    return st.session_state.cached_current_time
+
+def get_cached_db_status(force_refresh=False):
+    """Get database status with caching to prevent frequent API calls"""
+    cache_duration = 45  # Cache for 45 seconds
+    current_time = time.time()
+    
+    if (force_refresh or 
+        st.session_state.cached_db_status is None or 
+        st.session_state.cached_db_status_time is None or
+        (current_time - st.session_state.cached_db_status_time) > cache_duration):
+        
+        try:
+            st.session_state.cached_db_status = get_chromadb_status()
+            st.session_state.cached_db_status_time = current_time
+        except Exception as e:
+            if st.session_state.cached_db_status is None:
+                st.session_state.cached_db_status = {"error": str(e), "connected": False}
+    
+    return st.session_state.cached_db_status
 
 def main():
     # Initialize session state
@@ -300,6 +371,19 @@ def main():
     # Sidebar
     with st.sidebar:
         st.header("📊 Dashboard Controls")
+        
+        # Global refresh button
+        if st.button("🔄 Refresh All Data", use_container_width=True, type="primary"):
+            # Force refresh all cached data
+            get_cached_db_status(force_refresh=True)
+            get_cached_system_info(force_refresh=True) 
+            get_cached_current_time(force_refresh=True)
+            st.session_state.api_connected = api_client.check_api_connection()
+            st.success("✅ All data refreshed!")
+            time.sleep(0.5)  # Brief pause to show success message
+            st.rerun()
+        
+        st.divider()
         
         # API Connection Status Section
         st.subheader("🌐 API Connection")
@@ -355,18 +439,32 @@ STREAMLIT_API_TOKEN={'Set' if API_BEARER_TOKEN else 'Not Set'}""")
         st.subheader("💾 Database Status")
         
         if st.session_state.api_connected:
-            try:
-                db_status = get_chromadb_status()
-                
-                if db_status.get('connected') and db_status.get('collection_available'):
-                    st.markdown('<p class="status-good">✅ Database OK</p>', unsafe_allow_html=True)
-                    st.info(f"📂 Via API: {db_status.get('collection_name', 'transcripts')}")
-                else:
-                    st.markdown('<p class="status-bad">❌ Database Issue</p>', unsafe_allow_html=True)
-                    if 'error' in db_status:
-                        st.error(f"Error: {db_status['error']}")
-            except Exception as e:
-                st.error(f"❌ Status check failed: {e}")
+            col1, col2 = st.columns([3, 1])
+            
+            with col1:
+                try:
+                    db_status = get_cached_db_status()
+                    
+                    if db_status.get('connected') and db_status.get('collection_available'):
+                        st.markdown('<p class="status-good">✅ Database OK</p>', unsafe_allow_html=True)
+                        st.info(f"📂 Via API: {db_status.get('collection_name', 'transcripts')}")
+                    else:
+                        st.markdown('<p class="status-bad">❌ Database Issue</p>', unsafe_allow_html=True)
+                        if 'error' in db_status:
+                            st.error(f"Error: {db_status['error']}")
+                    
+                    # Show cache age
+                    if st.session_state.cached_db_status_time:
+                        cache_age = time.time() - st.session_state.cached_db_status_time
+                        st.caption(f"🕒 Cached {int(cache_age)}s ago")
+                        
+                except Exception as e:
+                    st.error(f"❌ Status check failed: {e}")
+            
+            with col2:
+                if st.button("🔄", help="Refresh DB Status", key="refresh_db"):
+                    get_cached_db_status(force_refresh=True)
+                    st.rerun()
         else:
             st.info("Connect to API to check database status")
         
@@ -399,21 +497,66 @@ STREAMLIT_API_TOKEN={'Set' if API_BEARER_TOKEN else 'Not Set'}""")
         
         # System Info
         with st.expander("🖥️ System Information"):
-            try:
-                sys_info = get_system_info()
-                st.write(f"**Platform:** {sys_info.get('platform', 'N/A')}")
-                st.write(f"**CPU Usage:** {sys_info.get('cpu_usage', 'N/A')}")
-                st.write(f"**Memory Usage:** {sys_info.get('memory_usage', 'N/A')}")
-                st.write(f"**Python:** {sys_info.get('python_version', 'N/A')}")
-            except Exception as e:
-                st.error(f"Failed to get system info: {e}")
+            col1, col2 = st.columns([4, 1])
+            
+            with col1:
+                try:
+                    sys_info = get_cached_system_info()
+                    st.write(f"**Platform:** {sys_info.get('platform', 'N/A')}")
+                    st.write(f"**CPU Usage:** {sys_info.get('cpu_usage', 'N/A')}")
+                    st.write(f"**Memory Usage:** {sys_info.get('memory_usage', 'N/A')}")
+                    st.write(f"**Python:** {sys_info.get('python_version', 'N/A')}")
+                    
+                    # Show cache age
+                    if st.session_state.cached_system_info_time:
+                        cache_age = time.time() - st.session_state.cached_system_info_time
+                        st.caption(f"🕒 Cached {int(cache_age)}s ago")
+                        
+                except Exception as e:
+                    st.error(f"Failed to get system info: {e}")
+            
+            with col2:
+                if st.button("🔄", help="Refresh System Info", key="refresh_sys"):
+                    get_cached_system_info(force_refresh=True)
+                    st.rerun()
         
         # Current time
-        try:
-            current_time = get_current_time()
-            st.info(f"🕒 Current Time: {current_time}")
-        except Exception as e:
-            st.error(f"Failed to get current time: {e}")
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            try:
+                current_time = get_cached_current_time()
+                st.info(f"🕒 Current Time: {current_time}")
+                
+                # Show cache age for time
+                if st.session_state.cached_current_time_timestamp:
+                    cache_age = time.time() - st.session_state.cached_current_time_timestamp
+                    st.caption(f"🕒 Cached {int(cache_age)}s ago")
+                    
+            except Exception as e:
+                st.error(f"Failed to get current time: {e}")
+        
+        with col2:
+            if st.button("🔄", help="Refresh Time", key="refresh_time"):
+                get_cached_current_time(force_refresh=True)
+                st.rerun()
+    
+    # Information about caching
+    with st.sidebar:
+        st.divider()
+        with st.expander("ℹ️ About Data Caching"):
+            st.markdown("""
+            **Smart Caching Enabled** 🧠
+            
+            To prevent excessive API calls, status data is cached:
+            - **Time**: 30 seconds
+            - **Database**: 45 seconds  
+            - **System Info**: 60 seconds
+            
+            Use refresh buttons (🔄) or "Refresh All Data" to update manually.
+            
+            This prevents the API from being overwhelmed with status requests every time you interact with the dashboard.
+            """)
     
     # Main content area - Simple interface
     simple_interface()

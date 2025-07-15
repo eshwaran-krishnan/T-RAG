@@ -56,7 +56,7 @@ class APIClient:
             payload = {"query": query}
             response = self.session.post(f"{self.base_url}/api/query", 
                                        json=payload, 
-                                       timeout=120)
+                                       timeout=180)
             if response.status_code == 200:
                 return response.json()
             else:
